@@ -20,9 +20,9 @@ from typing import Any, Sequence
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
-from timesfm import timesfm_base
+from baselines.timesfm import timesfm_base
 
-from . import pytorch_patched_decoder as ppd
+from baselines.timesfm import pytorch_patched_decoder as ppd
 
 _TOL = 1e-6
 

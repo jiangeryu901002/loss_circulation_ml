@@ -22,18 +22,18 @@ from typing import Optional, Tuple
 import einshape as es
 from jax import lax
 import jax.numpy as jnp
-from praxis import base_layer
-from praxis import base_model
-from praxis import layers
-from praxis import pax_fiddle
-from praxis import py_utils
-from praxis import pytypes
-from praxis.layers import activations
-from praxis.layers import embedding_softmax
-from praxis.layers import linears
-from praxis.layers import normalizations
-from praxis.layers import stochastics
-from praxis.layers import transformers
+from timesfm.praxis import base_layer
+from timesfm.praxis import base_model
+from timesfm.praxis import layers
+from timesfm.praxis import pax_fiddle
+from timesfm.praxis import py_utils
+from timesfm.praxis import pytypes
+from timesfm.praxis.layers import activations
+from timesfm.praxis.layers import embedding_softmax
+from timesfm.praxis.layers import linears
+from timesfm.praxis.layers import normalizations
+from timesfm.praxis.layers import stochastics
+from timesfm.praxis.layers import transformers
 
 # PAX shortcuts
 NestedMap = py_utils.NestedMap

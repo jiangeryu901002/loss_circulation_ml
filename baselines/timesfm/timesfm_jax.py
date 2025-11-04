@@ -26,8 +26,8 @@ import numpy as np
 from huggingface_hub import snapshot_download
 
 from paxml import checkpoints, tasks_lib
-from praxis import base_hyperparams, base_layer, pax_fiddle, py_utils, pytypes
-from praxis.layers import normalizations, transformers
+from timesfm.praxis import base_hyperparams, base_layer, pax_fiddle, py_utils, pytypes
+from timesfm.praxis.layers import normalizations, transformers
 from timesfm import timesfm_base
 from timesfm import patched_decoder
 
