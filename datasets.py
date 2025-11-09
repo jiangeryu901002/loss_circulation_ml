@@ -9,7 +9,7 @@ from collections import defaultdict, OrderedDict
 from sklearn import preprocessing
 from sklearn.preprocessing import StandardScaler
 try:
-    from gluonts.dataset.arrow import ArrowWriter
+    from .dataset.arrow import ArrowWriter
 except:
     pass
 from utils import process_batch
