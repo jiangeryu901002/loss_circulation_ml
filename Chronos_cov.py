@@ -47,7 +47,7 @@ root_path = './data/'
 scaler = StandardScaler()
 scaler.mean_, scaler.scale_ = [12.41033413], [0.72660783]
 
-settings = [(6, 3), (6, 6), (6, 12), (12, 3), (12, 6), (12, 12)]
+settings = [(32, 3), (32, 3), (32, 6), (32, 12)]
 for i, (context_len, horizon_len) in enumerate(settings):
     data_path = f'multivariate_c{context_len}h{horizon_len}'
     test_dataset = TimeSeriesDataset(

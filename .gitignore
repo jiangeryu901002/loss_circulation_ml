@@ -209,3 +209,10 @@ __marimo__/
 # Pycharm
 .idea/
 .git/
+
+# intermediate inputs
+data/
+
+# model training outputs
+chronos-2-finetuned/
+results/

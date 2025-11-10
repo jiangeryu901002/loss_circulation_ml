@@ -14,12 +14,12 @@ except:
     pass
 from utils import process_batch
 from baselines.timesfm import TimesFm
+import random
 
 class TimeSeriesDataset(Dataset):
     """Dataset for time series data compatible with TimesFM."""
 
     def __init__(self,
-                scaler,
                 series: Dict[str, torch.Tensor],
                 target='price',
             ):
@@ -32,11 +32,11 @@ class TimeSeriesDataset(Dataset):
             horizon_length: Number of future timesteps to predict
             freq_type: Frequency type (0, 1, or 2)
         """
-        self.x_context = series['x_context']
-        self.x_future = series['x_future']
-        self.x_padding = series['x_padding']
-        self.freq = series['freq']
-        self.scaler_target = scaler
+        # print(type(series['x_context']), type(series['x_context'][0]))
+        self.x_context = torch.stack(series['x_context'], axis=0)
+        self.x_future = torch.stack(series['x_future'], axis=0)
+        self.x_padding = torch.stack(series['x_padding'], axis=0)
+        self.freq = torch.stack(series['freq'], axis=0)
 
     def __len__(self) -> int:
         return self.x_context.shape[0]
@@ -51,17 +51,12 @@ class Dataset_Custom(Dataset):
 
     def __init__(
         self,
-        root_path,
-        data_path,
-        flag='train',         # 'train', 'val', or 'test'
+        data,         # 'train', 'val', or 'test'
         size=None,            # [seq_len, pred_len]
-        features='MS',        # 多变量 -> 单输出
-        target='price',       # 目标列
-        freq=0,             # 月度(这里不实际用, 但可用于 embed.py)
-        train_ratio=0.7,      # 每个zipcode训练集比例
-        val_ratio=0.33,       # 剩余中的验证集比例
-        scale=True,
-        data_type='univariate', # or multivariate
+        data_type = 'multivariate',        # 多变量 -> 单输出
+        target_col='Fluid Loss',       # 目标列
+        time_col='time_dt',
+        scale=None,
     ):
         super().__init__()
 
@@ -72,162 +67,66 @@ class Dataset_Custom(Dataset):
         else:
             self.context_len, self.horizon_len = size
 
-        self.flag = flag  # 'train','val','test'
-        self.features = features
-        self.target = target
-        self.freq = freq
-        self.scale = scale
-        self.train_ratio = train_ratio
-        self.val_ratio = val_ratio
-
-        self.root_path = root_path
-        self.data_path = data_path
         self.data_type = data_type
+        self.target_col = target_col
+        self.time_col = time_col
+        self.scale = scale
+
+        self.data = data
 
         # 存放每个zipcode的数据块
         self.series_list = []   # 普通特征 X
         self.out_list = []      # 目标列  Y
         self.xmark_list = []    # 存放 year, month 等时间戳特征
 
-        # index_map 记录 (series_idx, start_pos)
-        self.index_map = []
-        self.scaler_cov, self.scaler_target = None, None
-
         self.__read_data__()
 
     def __read_data__(self):
-        fpath = os.path.join(self.root_path, self.data_path)
-        df_raw = pd.read_csv(fpath, parse_dates=['date'])
-        # 按 (zipcode, date) 排序
-        df_raw = df_raw.sort_values(by=['zipcode','date']).reset_index(drop=True)
-
-        # =============== 新增：在df里加 year, month 列 ===============
-        df_raw['year'] = df_raw['date'].dt.year
-        df_raw['month'] = df_raw['date'].dt.month
-
-        # 你也可以类似 df_raw['day'] = df_raw['date'].dt.day etc.
-        # 这里只是示例演示 year/month 两列
-
-        # 去掉不需要列
-        drop_cols = ['city','city_full']
-        df_raw.drop(columns=drop_cols, inplace=True, errors='ignore')
-
-        # =============== 列分配 ===============
-        # 我们把 year/month 视为时间戳特征
-        time_mark_cols = ['year','month']
-
-        # 把 date, zipcode, target, year, month 全剔除后剩余的就是普通数值特征
-        remove_list = ['date','zipcode', self.target] + time_mark_cols
-        all_cols = list(df_raw.columns)
-        numeric_cols = [c for c in all_cols if c not in remove_list]
-
-        # 全局 scaler_cov
-        scale_data = []
-
-        grouped = df_raw.groupby("zipcode")
-        for zipcode, subdf in grouped:
-            subdf = subdf.sort_values("date")
-            N = len(subdf)
-            # 如果长度小于 seq_len+pred_len，跳过
-            if N < (self.context_len + self.horizon_len):
-                continue
-
-            # 按比例切分
-            train_count = int(N * self.train_ratio)
-            remain = N - train_count
-            val_count = int(N * self.val_ratio)
-            test_count = remain - val_count
-
-            # split by time for each county
-            if self.flag == 'train':
-                sub_data = subdf.iloc[:train_count]
-            elif self.flag == 'val':
-                sub_data = subdf.iloc[train_count : train_count + val_count]
-            elif self.flag == 'test':
-                sub_data = subdf.iloc[train_count + val_count : train_count + val_count + test_count]
-            else:
-                raise ValueError("flag 必须是 'train'/'val'/'test'.")
-
-            n_sub = len(sub_data)
-            if n_sub < (self.context_len + self.horizon_len):
-                continue
-
-            scale_data.append(subdf.iloc[:train_count])
-
+        for x, y in self.data:
             # X / Y / X_mark
-            X = sub_data[numeric_cols]  # shape [n_sub, d_in], d_in=34
-            Y = np.log1p(sub_data[self.target].values.reshape(-1, 1))  # shape [n_sub, 1]
-            X_mark = sub_data[time_mark_cols].values      # shape [n_sub, 2]
-
-            # 记录
-            series_idx = len(self.series_list)
+            X = x.loc[ : , x.columns != self.time_col]  # shape [n_sub, d_in], d_in=34
+            if self.scale:
+                X = pd.DataFrame(self.scale.transform(X), columns=X.columns)
+            Y = y[self.target_col].values
+            if self.data_type == 'multivariate':
+                Y = Y.reshape(-1, 1) #np.log1p(y[self.target_col].values.reshape(-1, 1))  # shape [n_sub, 1]
+            X_mark = pd.concat([x, y])[self.time_col].values      # shape [n_sub, 2]
+            X_mark = np.array(X_mark, dtype=np.float32)
             self.series_list.append(X)
             self.out_list.append(Y)
             self.xmark_list.append(X_mark)
 
-            # 构建滑窗 index
-            length = X.shape[0]
-            max_start = length - (self.context_len + self.horizon_len)
-            for stpos in range(max_start + 1):
-                self.index_map.append((series_idx, stpos))
-
-        scale_data = pd.concat(scale_data)
-        prices = np.log1p(scale_data[[self.target]].values)
-        if self.scale:
-            self.scaler_cov = StandardScaler()
-            self.scaler_cov.fit(scale_data[numeric_cols].values)
-            self.scaler_target = StandardScaler()
-            self.scaler_target.fit(prices)
-
-        for i in range(len(self.series_list)):
-            X, Y = self.series_list[i], self.out_list[i]
-            if self.scaler_cov:
-                X = pd.DataFrame(self.scaler_cov.transform(X.values), columns=numeric_cols)
-            if self.scaler_target:
-                Y = self.scaler_target.transform(Y).flatten()
-            self.series_list[i], self.out_list[i] = X, Y
-
-
-
     def __len__(self):
-        return len(self.index_map)
+        return len(self.series_list)
 
     def __getitem__(self, idx):
-        series_idx, start_pos = self.index_map[idx]
-        X = self.series_list[series_idx]      # shape [N, 34]
-        Y = self.out_list[series_idx]         # shape [N, 1]
-        # X_mark = self.xmark_list[series_idx]  # shape [N, 2]
+        X = self.series_list[idx]      # shape [N, 34]
+        Y = self.out_list[idx]         # shape [N, 1]
+        X_mark = self.xmark_list[idx]  # shape [N, 2]
         # encoder input
-        seq_x = torch.from_numpy(Y[start_pos : start_pos + self.context_len]).float()           # [seq_len, 34]
-
-        # decoder label
-        r_begin = start_pos + self.context_len
-        r_end   = r_begin + self.horizon_len
-        seq_y   = Y[r_begin : r_end]           # [pred_len, 1]
-        seq_y      = torch.from_numpy(seq_y).float()
-
-        input_padding = torch.zeros_like(seq_x)
-        freq = torch.tensor([self.freq], dtype=torch.long)
-
-        # seq_x_mark = X_mark[start_pos : start_pos + self.context_len] # [seq_len, 2]
-        # seq_y_mark = X_mark[r_begin : r_end]   # [pred_len, 2]
-        # seq_x_mark = torch.from_numpy(seq_x_mark).float()
-        # seq_y_mark = torch.from_numpy(seq_y_mark).float()
-
-        if self.data_type == 'multivariate':
-            covs = X.iloc[start_pos:r_end]
-            covs = {c:torch.from_numpy(covs[c].values).float() for c in X.columns}
-            covs['inputs'] = seq_x
-            covs['outputs'] = seq_y
-            covs['input_padding'] = input_padding
-            covs['freq'] = freq
-            return covs #seq_x, seq_y, seq_x_mark, seq_y_mark, covs
+        seq_x = torch.from_numpy(X[self.target_col].values).float()           # [seq_len, 34]
+        
+        if seq_x.shape[0] < 32:
+            padding = torch.zeros((32 - seq_x.shape[0], *seq_x.shape[1:]))
+            seq_x = torch.concat([padding, seq_x])
+            input_padding = torch.concat([torch.ones_like(padding), input_padding])
         else:
-            if seq_x.shape[0] < 32:
-                padding = torch.zeros((32 - seq_x.shape[0], *seq_x.shape[1:]))
-                seq_x = torch.concat([padding, seq_x])
-                input_padding = torch.concat([torch.ones_like(padding), input_padding])
-            return seq_x, input_padding, freq, seq_y
+            input_padding = torch.zeros_like(seq_x)
+
+        seq_y = torch.from_numpy(Y).float()
+        freq = torch.tensor([0], dtype=torch.long)
+        seq_x_mark = X_mark[:self.context_len] # [seq_len, 2]
+        seq_y_mark = X_mark[self.context_len:]   # [pred_len, 2]
+        seq_x_mark = torch.from_numpy(seq_x_mark).float()
+        seq_y_mark = torch.from_numpy(seq_y_mark).float()
+
+        # print(X.columns, X.shape, Y.shape, seq_x.shape, seq_y.shape, input_padding.shape, freq.shape, seq_x_mark.shape, seq_y_mark.shape)
+        covs = {c:torch.from_numpy(X[c].values).float() for c in X.columns if c != self.target_col}
+        covs['x_context'] = seq_x
+        covs['x_future'] = seq_y
+        covs['x_padding'] = input_padding
+        covs['freq'] = freq
+        return covs #seq_x, seq_y, seq_x_mark, seq_y_mark, covs
 
 ##############################
 # 2) 数据管道
@@ -322,7 +221,6 @@ def get_batched_data_fn(
 def convert_to_processed_dataset(
     path: Union[str, Path],
     time_series: Dataset_Custom,
-    tfm: TimesFm,
     data_type: str,
     compression: str = "lz4",
 ):
@@ -335,23 +233,24 @@ def convert_to_processed_dataset(
 
     # Set an arbitrary start time
     start = np.datetime64("2000-01-01 00:00", "s")
-    dataset_arrow, dataset_tensor = [], {'x_context':[], 'x_padding':[], 'freq':[], 'x_future':[]}
-    dataset_tmp = {k:[] for k in time_series[0]}
+    dataset_tensor = {}
+    for k in time_series[0].keys():
+        dataset_tensor[k] = [] 
     for item in time_series:
         if data_type == "univariate":
-            x_context, x_padding, freq, x_future = item
+            x_context, x_padding, freq, x_future = item['x_context'], item['x_padding'], item['freq'], item['x_future']
+            # print(x_context.shape, x_padding.shape, freq.shape, x_future.shape)
             ts = torch.cat((x_context, x_future), dim=-1).numpy()
-            dataset_arrow.append({"start": start, "target": ts})
             dataset_tensor['x_context'].append(x_context)
             dataset_tensor['x_padding'].append(x_padding)
             dataset_tensor['freq'].append(freq)
             dataset_tensor['x_future'].append(x_future)
         elif data_type == "multivariate":
-            for k in dataset_tmp:
-                dataset_tmp[k].append(item[k])
+            for k in dataset_tensor:
+                dataset_tensor[k].append(item[k])
         else:
             raise ValueError(f"data_type must be one of ['univariate', 'multivariate'], not {data_type}")
-
+    print("processed dataset:", dataset_tensor.keys(), len(time_series))#, time_series[0])
         # print(x_context.shape, x_padding.shape, freq.shape, x_future.shape)
     # if data_type == "univariate":
     #     dataset_tensor['x_context'] = torch.stack(dataset_tensor['x_context'])
@@ -374,15 +273,14 @@ def convert_to_processed_dataset(
     #     raise ValueError(f"data_type must be one of ['univariate', 'multivariate'], not {data_type}")
 
     print(f'saving dataset to {path}')
-    print(time_series.scaler_target.mean_, time_series.scaler_target.scale_)
     # if not os.path.exists(path+'.arrow'):
     #     ArrowWriter(compression=compression).write_to_file(
     #         dataset_arrow,
     #         path=path+'.arrow',
     #     )
-    #
-    # if not os.path.exists(path+'.pt'):
-    #     torch.save(dataset_tensor, path+'.pt')
+    
+    if not os.path.exists(path+'.pt'):
+        torch.save(dataset_tensor, path+'.pt')
 
 
 

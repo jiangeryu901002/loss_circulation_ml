@@ -46,7 +46,6 @@ def get_model(context_len, horizon_len, load_weights: bool = False, checkpoint_p
 
 def evaluation(
         model: TimesFm,
-        tfm: TimesFm,
         val_dataset: Dataset,
         batch_size: int,
         save_path: 'results.npz'
@@ -64,23 +63,23 @@ def evaluation(
         x_future = x_future.to(device)
 
         context_vals = x_context.unsqueeze(1).cpu().numpy()
-        future_vals = x_future.unsqueeze(1).cpu().numpy()
+        future_vals = x_future.squeeze().cpu().numpy()#x_future.unsqueeze(1).cpu().numpy() # B, N, horizon_len, dim
         context_len = context_vals.shape[-1]
-        horizon_len = future_vals.shape[-1]
+        horizon_len = future_vals.shape[-1] # B, horizon_len
         with torch.no_grad():
             predictions = model(x_context, x_padding.float(), freq)
             predictions_mean = predictions[..., 0]  # [B, N, 128]
             pred = predictions_mean[:, -1, context_len:context_len+horizon_len]  # [B, horizon_len]
-        pred_vals = pred.unsqueeze(1).cpu().numpy()
-        # print('plot data:', context_len, horizon_len, context_vals.shape, future_vals.shape, pred_vals.shape,
-        #       predictions.shape, predictions_mean.shape, pred.shape)
+        pred_vals = pred.cpu().numpy() # pred.unsqueeze(1).cpu().numpy()
+        print('plot data:', context_len, horizon_len, context_vals.shape, future_vals.shape, pred_vals.shape,
+              predictions.shape, predictions_mean.shape, pred.shape)
 
         labels.append(future_vals)
         preds.append(pred_vals)
     labels, preds = np.concatenate(labels), np.concatenate(preds)
     # print(val_dataset.scaler_target.mean_, val_dataset.scaler_target.scale_)
-    np.savez(save_path, labels=labels, preds=preds, mean=val_dataset.scaler_target.mean_, std=val_dataset.scaler_target.scale_)
-    metrics = compute_metrics(labels, preds, scaler=val_dataset.scaler_target)
+    np.savez(save_path, labels=labels, preds=preds)#, mean=val_dataset.scaler_target.mean_, std=val_dataset.scaler_target.scale_)
+    metrics = compute_metrics(labels, preds)#, scaler=val_dataset.scaler_target)
     res = {'MSE': metrics[0], 'MAE': metrics[1], 'MAPE': metrics[2],
            'SMAPE': metrics[3], 'log-RMSE': metrics[4], 'r2': metrics[5]}
     print(res)
@@ -109,7 +108,6 @@ def single_gpu_example(model, tfm, train_dataset, val_dataset, test_dataset, bat
 
     evaluation(
         model=model,
-        tfm=tfm,
         val_dataset=test_dataset,
         batch_size=batch_size,
         save_path=save_path,
@@ -118,25 +116,20 @@ def single_gpu_example(model, tfm, train_dataset, val_dataset, test_dataset, bat
 
 freq_type = 1
 batch_size = 128
-root_path = './data/'
-scaler = StandardScaler()
-scaler.mean_, scaler.scale_ = [12.41033413], [0.72660783]
+root_path = './data/csm'
 #(6, 3),(6, 6), (6, 12),(12, 3), (12, 6), (12, 12)
-settings = [(6, 3), (6, 6), (6, 12)]
+settings = [(32, 3), (32, 3), (32, 6), (32, 12)]
 for context_len, horizon_len in settings:
     data_path = f'multivariate_c{context_len}h{horizon_len}'
     train_dataset = TimeSeriesDataset(
-        scaler,
         series=torch.load(path.join(root_path, data_path+'_train.pt')),
     )
 
     val_dataset = TimeSeriesDataset(
-        scaler,
         series=torch.load(path.join(root_path, data_path+'_val.pt')),
     )
 
     test_dataset = TimeSeriesDataset(
-        scaler,
         series=torch.load(path.join(root_path, data_path+'_test.pt')),
     )
 
@@ -145,13 +138,14 @@ for context_len, horizon_len in settings:
     print(f"- Validation samples: {len(val_dataset)}")
     print(f"- Testing samples: {len(test_dataset)}")
 
-    model, hparams, tfm = get_model(context_len, horizon_len, load_weights=True, checkpoint_path=f'./checkpoints/timesFM_multivariate_c{context_len}h{horizon_len}.pt')
+    model, hparams, tfm = get_model(context_len, horizon_len, load_weights=False, checkpoint_path=f'./checkpoints/timesFM_multivariate_c{context_len}h{horizon_len}.pt')
 
-    print(f"Model loaded, evaluating model with zero-shot for c{context_len}h{horizon_len}...")
-    evaluation(model, tfm, test_dataset, batch_size,
-               f'./results/timesFM_multivariate_zeroshot_c{context_len}h{horizon_len}.npz')
-    # print(f"Finetuning model...c{context_len}h{horizon_len}")
-    # single_gpu_example(model, tfm, train_dataset, val_dataset, test_dataset, batch_size,
-    # f'./checkpoints/timesFM_multivariate_c{context_len}h{horizon_len}',
-    # f'./results/timesFM_multivariate_finetune_c{context_len}h{horizon_len}.npz')
+    # print(f"Model loaded, evaluating model with zero-shot for c{context_len}h{horizon_len}...")
+    # evaluation(model, test_dataset, batch_size,
+    #            f'./results/timesFM_multivariate_zeroshot_c{context_len}h{horizon_len}.npz')
+    print(f"Finetuning model...c{context_len}h{horizon_len}")
+    single_gpu_example(model, tfm, train_dataset, val_dataset, test_dataset, batch_size,
+    f'./checkpoints/timesFM_multivariate_c{context_len}h{horizon_len}',
+    f'./results/timesFM_multivariate_finetune_c{context_len}h{horizon_len}.npz')
+    break
 
