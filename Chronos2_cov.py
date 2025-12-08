@@ -24,22 +24,73 @@ from chronos import BaseChronosPipeline, Chronos2Pipeline
 # GPU recommended for faster inference, but CPU is also supported
 pipeline: Chronos2Pipeline = BaseChronosPipeline.from_pretrained("amazon/chronos-2", device_map="cuda")
 
+# chatgpt preferred:
 def data_processing(data, target_col, past_covariate_cols, future_covariate_cols, for_training=False):
+    """
+    data: list of (x, y)
+      - x: 过去 context_len 个时间步（DataFrame）
+      - y: 未来 horizon_len 个时间步（DataFrame）
+    """
     inputs = []
     outputs = []
+
     for x, y in data:
-        inputs.append({
-            "target": x[target_col].to_numpy().squeeze() if not for_training else np.concatenate([x[target_col].to_numpy().squeeze(), y[target_col].to_numpy().squeeze()]),
-            "past_covariates": {
-                p: x[p].to_numpy().squeeze() if not for_training else np.concatenate([x[p].to_numpy().squeeze(), y[p].to_numpy().squeeze()]) for p in past_covariate_cols
-            },
-            "future_covariates": {
-                f: y[f].to_numpy().squeeze() for f in future_covariate_cols
-            },
-        })
-        outputs.append(y[target_col].to_numpy().squeeze())
-    outputs = np.array(outputs)
+        # 目标变量：过去 + 未来
+        past_target = x[target_col].to_numpy().reshape(-1)      # (context_len,)
+        future_target = y[target_col].to_numpy().reshape(-1)    # (horizon_len,)
+
+        if for_training:
+            target_all = np.concatenate([past_target, future_target])  # (context_len + horizon_len,)
+        else:
+            target_all = past_target
+
+        # 过去协变量
+        past_covariates = {}
+        for p in past_covariate_cols:
+            past_p = x[p].to_numpy().reshape(-1)                # (context_len,)
+            future_p = y[p].to_numpy().reshape(-1)              # (horizon_len,)
+            if for_training:
+                past_covariates[p] = np.concatenate([past_p, future_p])  # (context_len + horizon_len,)
+            else:
+                past_covariates[p] = past_p                     # (context_len,)
+
+        # 未来协变量（只在未来部分有）
+        future_covariates = {
+            f: y[f].to_numpy().reshape(-1) for f in future_covariate_cols   # (horizon_len,)
+        }
+
+        inputs.append(
+            {
+                "target": target_all,
+                "past_covariates": past_covariates,
+                "future_covariates": future_covariates,
+            }
+        )
+
+        # outputs 只保存“未来 H 步的真值”，方便后面算指标
+        outputs.append(future_target)   # shape (horizon_len,)
+
+    # 用 stack 保证无论 H=1/3/6/12，最终都是 (N, H)
+    outputs = np.stack(outputs, axis=0)
+
     return inputs, outputs
+
+# def data_processing(data, target_col, past_covariate_cols, future_covariate_cols, for_training=False):
+#     inputs = []
+#     outputs = []
+#     for x, y in data:
+#         inputs.append({
+#             "target": x[target_col].to_numpy().squeeze() if not for_training else np.concatenate([x[target_col].to_numpy().squeeze(), y[target_col].to_numpy().squeeze()]),
+#             "past_covariates": {
+#                 p: x[p].to_numpy().squeeze() if not for_training else np.concatenate([x[p].to_numpy().squeeze(), y[p].to_numpy().squeeze()]) for p in past_covariate_cols
+#             },
+#             "future_covariates": {
+#                 f: y[f].to_numpy().squeeze() for f in future_covariate_cols
+#             },
+#         })
+#         outputs.append(y[target_col].to_numpy().squeeze())
+#     outputs = np.array(outputs)
+#     return inputs, outputs
 
 def evaluation(
         pipeline: ChronosPipeline,
@@ -80,7 +131,7 @@ def finetuning(pipeline, val_loader, horizon_len, batch_size):
     finetuned_pipeline = pipeline.fit(
         inputs=inputs,
         prediction_length=horizon_len,
-        num_steps=50,  # few fine-tuning steps for a quick demo
+        num_steps=200,  # few fine-tuning steps for a quick demo
         learning_rate=1e-5,
         batch_size=batch_size,
         logging_steps=10,
@@ -96,9 +147,11 @@ if __name__ == '__main__':
                 'Drilling Speed','diff_Distance','diff_Depth','Internal Pressure','Annular Pressure']
     future_covariate_cols = ['inclination_input', 'in_flow_rate_input', 'thruster_force_input']
     batch_size = 128
-    root_path = './data/csm'
+    root_path = './data'  #每次可能都要改一下
     file_names = ["0429_model_v5.csv", "0501_model_v5.csv", "0428_model_v5.csv"]
-    settings = [(32, 3), (32, 3), (32, 6), (32, 12)] # use smaller input lengths to get more obvious performance differences
+    settings = [(128, 12)] # use smaller input lengths to get more obvious performance differences
+    #上面这一行代码，第一个数字是input length，第二个是output。之所以有四个是因为repeat了四次有四个模型
+
     for i, (context_len, horizon_len) in enumerate(settings):
         adj, features, diffs, (scaler, scaler_diff), names = load_CSM(
             [os.path.join(root_path, f) for f in file_names], 
@@ -124,18 +177,17 @@ if __name__ == '__main__':
         # evaluation(pipeline, (test_inputs, test_outputs), context_len, horizon_len, batch_size, f'./results/Chronos_multivariate_zeroshot_c{context_len}h{horizon_len}.npz')
 
         print('finetune...')
+        # epochs = 400
         finetuned_pipeline = pipeline.fit(
             inputs=train_inputs,
             validation_inputs=val_inputs,
             prediction_length=horizon_len,
-            num_steps=50,  # few fine-tuning steps for a quick demo
+            num_steps=200,  # few fine-tuning steps for a quick demo
             learning_rate=1e-5,
             batch_size=batch_size,
             logging_steps=10,
             finetuned_ckpt_name=f'checkpoints/Chronos_multivariate_finetune_c{context_len}h{horizon_len}/checkpoint-final',#"amazon/chronos-t5-base",
         )
-
+        evaluation(finetuned_pipeline, (train_inputs, train_outputs), context_len, horizon_len, batch_size, f'./results/train_Chronos_multivariate_finetune_c{context_len}h{horizon_len}.npz')
         evaluation(finetuned_pipeline, (test_inputs, test_outputs), context_len, horizon_len, batch_size, f'./results/Chronos_multivariate_finetune_c{context_len}h{horizon_len}.npz')
-        break
-
 
