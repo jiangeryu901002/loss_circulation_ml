@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from utils import compute_metrics
 
 # ==========================
 # 配置部分（按需修改）
@@ -32,9 +33,15 @@ def load_last_step_series(context_len, horizon, base_dir, fname_pattern):
     data = np.load(fpath)
     labels = data["labels"]  # (N, horizon)
     preds  = data["preds"]   # (N, horizon)
-    print(labels.shape, preds.shape)
+    baseline = np.repeat(preds[:, [0]], preds.shape[1], axis=1)
+    metrics = compute_metrics(labels, preds)
+    res = {'MSE': metrics[0], 'MAE': metrics[1], 'MAPE': metrics[2], 'SMAPE': metrics[3], 'RMSE': metrics[4], 'r2': metrics[5]}
+    metrics_bs = compute_metrics(labels, baseline)
+    res_bs = {'MSE': metrics_bs[0], 'MAE': metrics_bs[1], 'MAPE': metrics_bs[2], 'SMAPE': metrics_bs[3], 'RMSE': metrics_bs[4], 'r2': metrics_bs[5]}
+    print(res, res_bs)
     y_true = labels[:, -1]   # 真值对应 t+horizon
     y_pred = preds[:, -1]    # 预测对应 t+horizon
+
 
     return y_true, y_pred
 
@@ -84,6 +91,7 @@ def plot_pred_true_with_time_shift(context_len, horizons, base_dir, fname_patter
     plt.show()
 
     print(f"Saved figure to: {out_name}")
+
 
 
 if __name__ == "__main__":

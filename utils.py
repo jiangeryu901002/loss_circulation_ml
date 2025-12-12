@@ -255,22 +255,29 @@ def mae(y_pred, y_true):
 def symmetric_mean_absolute_percentage_error(y_true, y_pred):
     return np.mean(np.abs(y_true - y_pred) / (np.abs(y_pred) + np.abs(y_true) + 1e-6))
 
-def compute_metrics(y_pred, y_true, scaler=None):
+def compute_ci_bootstrap(y):
+    
+
+def compute_metrics(y_pred, y_true, scaler=None, compute_ci=False):
     if scaler is not None:
         y_pred = scaler.inverse_transform(y_pred.reshape(-1, 1))
         y_true = scaler.inverse_transform(y_true.reshape(-1, 1))# (n_samples, n_preds)
         y_pred, y_true = np.expm1(y_pred), np.expm1(y_true)
     ymin, ymax = min(y_pred.min(), y_true.min()), max(y_pred.max(), y_true.max())
     # y_pred, y_true = y_pred - ymin + 1, y_true - ymin + 1
+    y_pred, y_true = np.permute_dims(y_pred, [1, 0]), np.permute_dims(y_true, [1, 0])
     print("output shape:", y_pred.shape, y_true.shape)
     try:
-        mape = mean_absolute_percentage_error(y_true, y_pred)
-        mae = mean_absolute_error(y_true, y_pred)
-        mse = mean_squared_error(y_true, y_pred)
+        mape = mean_absolute_percentage_error(y_true, y_predmultioutput='raw_values')
+        mae = mean_absolute_error(y_true, y_pred, multioutput='raw_values')
+        mse = mean_squared_error(y_true, y_pred, multioutput='raw_values')
         # log_rmse = root_mean_squared_log_error(y_true, y_pred)
-        rmse = root_mean_squared_error(y_true, y_pred)
-        r2 = r2_score(y_true, y_pred)
-        smape = symmetric_mean_absolute_percentage_error(y_true, y_pred)
+        rmse = root_mean_squared_error(y_true, y_pred, multioutput='raw_values')
+        r2 = r2_score(y_true, y_pred, multioutput='raw_values')
+        smape = symmetric_mean_absolute_percentage_error(y_true, y_pred, multioutput='raw_values')
+
+        if compute_ci:
+
     except Exception as e:
         print(e)
         # print('label', y_true)
