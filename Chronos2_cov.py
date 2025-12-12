@@ -149,7 +149,8 @@ if __name__ == '__main__':
     batch_size = 128
     root_path = './data'  #每次可能都要改一下
     file_names = ["0429_model_v5.csv", "0501_model_v5.csv", "0428_model_v5.csv"]
-    settings = [(128, 12)] # use smaller input lengths to get more obvious performance differences
+    settings = [(3,3),(512,3)]
+    # use smaller input lengths to get more obvious performance differences
     #上面这一行代码，第一个数字是input length，第二个是output。之所以有四个是因为repeat了四次有四个模型
 
     for i, (context_len, horizon_len) in enumerate(settings):

@@ -1,7 +1,6 @@
 import matplotlib.pyplot as plt
 
 # ---------------------------
-# 1) 数据：Epoch 实验
 # ---------------------------
 epoch_labels = ["zeroshot", 1, 2, 3, 5, 10, 20, 50, 100, 200, 300, 400]
 
@@ -14,7 +13,6 @@ SMAPE= [0.201,  0.200,  0.199,  0.199,  0.199,  0.199,  0.199,  0.201,  0.198,  
 R2   = [0.523,  0.522,  0.523,  0.522,  0.520,  0.518,  0.526,  0.545,  0.543,  0.553,  0.539,  0.552 ]
 
 # ---------------------------
-# 2) 四子图绘制
 # ---------------------------
 fig, axs = plt.subplots(2, 2, figsize=(11, 8))
 
@@ -45,7 +43,6 @@ axs[1, 1].set_title("$R^2$ vs Training Steps")
 axs[1, 1].set_xlabel("Number of Fine-Tuning Steps (log scale)")
 axs[1, 1].set_ylabel("$R^2$")
 
-# 整体标题
 plt.suptitle("Model Performance vs Number of Fine-Tuning Steps", fontsize=16, y=1.02)
 
 plt.tight_layout()

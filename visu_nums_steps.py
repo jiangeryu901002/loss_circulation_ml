@@ -1,74 +1,96 @@
 import os
 import numpy as np
-import pandas as pd
-import re
+import matplotlib.pyplot as plt
 
-from utils import compute_metrics   # 你原来用的指标函数
+# ==========================
+# 配置部分（按需修改）
+# ==========================
+results_dir = "./results"   # 存放 npz 结果文件的目录
+context_len = 128           # 固定的 context length
+horizons = [1,3,6,12]    # 需要对比的 horizons
+filename_pattern = "Chronos_multivariate_finetune_c{c}h{h}.npz"
 
-# ==== 修改这里 ====
-results_dir = "./results"   # <- 你的 npz 文件路径
-pattern = r"steps(\d+)\.npz"  # 自动提取 num_steps = 20, 50, 100...
-# ===================
+# 每个 time step = 10 seconds
+STEP_SECONDS = 10.0
+STEP_MINUTES = STEP_SECONDS / 60.0
 
-
-def collect_results(results_dir):
-    rows = []
-
-    for fname in os.listdir(results_dir):
-        if fname.endswith(".npz") and re.search(pattern, fname):
-            full_path = os.path.join(results_dir, fname)
-
-            num_steps = int(re.search(pattern, fname).group(1))
-            data = np.load(full_path)
-
-            labels = data["labels"]
-            preds = data["preds"]
-
-            metrics = compute_metrics(labels, preds)
-            mse, mae, mape, smape, rmse, r2 = metrics
-
-            rows.append({
-                "num_steps": num_steps,
-                "MSE": mse,
-                "MAE": mae,
-                "SMAPE": smape / 100.0,   # ★ 将百分比转为小数
-                "R2": r2
-            })
-
-    rows = sorted(rows, key=lambda x: x["num_steps"])
-    return pd.DataFrame(rows)
+# 如果你想只画前 N 个点（可选）
+max_points = None  # e.g., 800
 
 
-def make_latex_table(df: pd.DataFrame):
-    latex = df.to_latex(
-        index=False,
-        float_format="%.4f",
-        column_format="c" * len(df.columns)
+def load_last_step_series(context_len, horizon, base_dir, fname_pattern):
+    """
+    读取 npz 的 labels 和 preds，并取最后一个未来步 (t+horizon)。
+    返回 y_true, y_pred (长度 N)。
+    """
+    fname = fname_pattern.format(c=context_len, h=horizon)
+    fpath = os.path.join(base_dir, fname)
+
+    if not os.path.exists(fpath):
+        raise FileNotFoundError(f"File not found: {fpath}")
+
+    data = np.load(fpath)
+    labels = data["labels"]  # (N, horizon)
+    preds  = data["preds"]   # (N, horizon)
+    print(labels.shape, preds.shape)
+    y_true = labels[:, -1]   # 真值对应 t+horizon
+    y_pred = preds[:, -1]    # 预测对应 t+horizon
+
+    return y_true, y_pred
+
+
+def plot_pred_true_with_time_shift(context_len, horizons, base_dir, fname_pattern, max_points=None):
+    """
+    纵向大图：每个 horizon 一个子图，两条线 true vs pred。
+    关键：把 (t+horizon) 的 true/pred 在 x 轴上整体右移 horizon 个 step。
+    x 轴单位：minutes
+    """
+    fig, axes = plt.subplots(len(horizons), 1, figsize=(12, 11), sharex=True)
+    if len(horizons) == 1:
+        axes = [axes]
+
+    for ax, h in zip(axes, horizons):
+        y_true, y_pred = load_last_step_series(context_len, h, base_dir, fname_pattern)
+
+        # 可选截断（在 shift 前截断即可）
+        if max_points is not None:
+            y_true = y_true[:max_points]
+            y_pred = y_pred[:max_points]
+
+        N = len(y_true)
+
+        # 关键：时间轴右移 h 个 step，使其对应 t+h
+        # 每个样本索引 i 对应的预测点应落在 (i + h) 处
+        time_min = (np.arange(N) + context_len + (h - 1)) * STEP_MINUTES
+
+        ax.plot(time_min, y_true, label="True", linewidth=1.6)
+        ax.plot(time_min, y_pred, label="Predicted", linewidth=1.3, linestyle="--")
+
+        ax.set_title(f"Horizon = {h} (t+{h})", loc="left")
+        ax.set_ylabel(r"Lost circulation ($\mathrm{m}^3/\mathrm{min}$)")
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.legend(loc="upper right")
+
+    axes[-1].set_xlabel("Time (min)")
+
+    fig.suptitle(
+        f"Predicted vs True Lost Circulation at Different Horizons (Context Length = {context_len})",
+        fontsize=14, y=0.98
     )
-    return latex
 
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    out_name = f"pred_vs_true_shifted_c{context_len}.png"
+    plt.savefig(out_name, dpi=300, bbox_inches="tight")
+    plt.show()
 
-def main():
-    df = collect_results(results_dir)
-
-    print("\n=== Summary Table ===")
-    print(df)
-
-    # # 保存 CSV
-    # out_csv = os.path.join(results_dir, "num_steps_metrics.csv")
-    # df.to_csv(out_csv, index=False)
-    # print(f"\nSaved CSV to: {out_csv}")
-    #
-    # 保存 LaTeX
-    latex = make_latex_table(df)
-    out_tex = os.path.join(results_dir, "num_steps_metrics.tex")
-    with open(out_tex, "w") as f:
-        f.write(latex)
-
-    print(f"Saved LaTeX table to: {out_tex}")
-    print("\n=== LaTeX Table ===")
-    print(latex)
+    print(f"Saved figure to: {out_name}")
 
 
 if __name__ == "__main__":
-    main()
+    plot_pred_true_with_time_shift(
+        context_len=context_len,
+        horizons=horizons,
+        base_dir=results_dir,
+        fname_pattern=filename_pattern,
+        max_points=max_points,
+    )
