@@ -34,9 +34,9 @@ def load_last_step_series(context_len, horizon, base_dir, fname_pattern):
     labels = data["labels"]  # (N, horizon)
     preds  = data["preds"]   # (N, horizon)
     baseline = np.repeat(preds[:, [0]], preds.shape[1], axis=1)
-    metrics = compute_metrics(labels, preds)
+    metrics = compute_metrics(labels, preds, compute_ci=True)
     res = {'MSE': metrics[0], 'MAE': metrics[1], 'MAPE': metrics[2], 'SMAPE': metrics[3], 'RMSE': metrics[4], 'r2': metrics[5]}
-    metrics_bs = compute_metrics(labels, baseline)
+    metrics_bs = compute_metrics(labels, baseline, compute_ci=True)
     res_bs = {'MSE': metrics_bs[0], 'MAE': metrics_bs[1], 'MAPE': metrics_bs[2], 'SMAPE': metrics_bs[3], 'RMSE': metrics_bs[4], 'r2': metrics_bs[5]}
     print(res, res_bs)
     y_true = labels[:, -1]   # 真值对应 t+horizon
