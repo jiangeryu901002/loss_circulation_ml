@@ -213,6 +213,9 @@ __marimo__/
 # intermediate inputs
 data/
 
+# Local full experiment snapshot used as a source for the cleaned root repository
+/loss_circulation_ml/
+
 # model training outputs
 chronos-2-finetuned/
 results/

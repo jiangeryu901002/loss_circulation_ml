@@ -6,15 +6,11 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 from collections import defaultdict, OrderedDict
-from sklearn import preprocessing
-from sklearn.preprocessing import StandardScaler
 try:
     from .dataset.arrow import ArrowWriter
 except:
     pass
 from utils import process_batch
-from baselines.timesfm import TimesFm
-import random
 
 class TimeSeriesDataset(Dataset):
     """Dataset for time series data compatible with TimesFM."""

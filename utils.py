@@ -255,12 +255,12 @@ def mae(y_pred, y_true):
 def symmetric_mean_absolute_percentage_error(y_true, y_pred):
     return np.mean(np.abs(y_true - y_pred) / (np.abs(y_pred) + np.abs(y_true) + 1e-6))
 
-def compute_ci_bootstrap(y, n_rounds=500, ci=95):
+def compute_ci_bootstrap(y, n_rounds=500, ci=90):
     """
     Compute bootstrap confidence interval for the mean of y.
     - y: array-like, shape (n_samples,) or (n_samples, n_features)
     - n_rounds: number of bootstrap samples (default 500)
-    - ci: confidence level in percent (default 95)
+    - ci: confidence level in percent (default 90)
     Returns (lower, upper) where each is scalar for 1D input or array for 2D input (per-column).
     """
     y = np.asarray(y)
@@ -286,34 +286,64 @@ def compute_ci_bootstrap(y, n_rounds=500, ci=95):
         return (float(lower[0]), float(upper[0]))
     return (lower, upper)
 
-def compute_metrics(y_pred, y_true, scaler=None, compute_ci=False):
+def compute_metrics(y_true, y_pred, scaler=None, compute_ci=False):
+    """Compute aggregate forecasting metrics in a consistent order.
+
+    Returns MSE, MAE, MAPE, sMAPE, RMSE, and R2. When ``compute_ci`` is
+    enabled, each item is returned as ``(estimate, lower, upper)`` using a
+    90% bootstrap confidence interval over forecast samples.
+    """
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    if y_true.shape != y_pred.shape:
+        raise ValueError(f"Shape mismatch: y_true={y_true.shape}, y_pred={y_pred.shape}")
+
     if scaler is not None:
-        y_pred = scaler.inverse_transform(y_pred.reshape(-1, 1))
-        y_true = scaler.inverse_transform(y_true.reshape(-1, 1))
+        original_shape = y_true.shape
+        y_pred = scaler.inverse_transform(y_pred.reshape(-1, 1)).reshape(original_shape)
+        y_true = scaler.inverse_transform(y_true.reshape(-1, 1)).reshape(original_shape)
         y_pred, y_true = np.expm1(y_pred), np.expm1(y_true)
-    ymin, ymax = min(y_pred.min(), y_true.min()), max(y_pred.max(), y_true.max())
-    y_pred, y_true = np.permute_dims(y_pred, [1, 0]), np.permute_dims(y_true, [1, 0])
+
     print("output shape:", y_pred.shape, y_true.shape)
-    try:
-        mape = mean_absolute_percentage_error(y_true, y_pred, multioutput='raw_values')
-        mae = mean_absolute_error(y_true, y_pred, multioutput='raw_values')
-        mse = mean_squared_error(y_true, y_pred, multioutput='raw_values')
-        rmse = root_mean_squared_error(y_true, y_pred, multioutput='raw_values')
-        r2 = r2_score(y_true, y_pred, multioutput='raw_values')
-        smape = symmetric_mean_absolute_percentage_error(y_true, y_pred)
 
-        if compute_ci:
-            mape_avg, (mape_al, mape_au) = mape.mean(), compute_ci_bootstrap(mape)
-            mae_avg, (mae_al, mae_au) = mae.mean(), compute_ci_bootstrap(mae)
-            mse_avg, (mse_al, mse_au) = mse.mean(), compute_ci_bootstrap(mse)
-            rmse_avg, (rmse_al, rmse_au) = rmse.mean(), compute_ci_bootstrap(rmse)
-            r2_avg, (r2_al, r2_au) = r2.mean(), compute_ci_bootstrap(r2)
-            smape_avg, (smape_al, smape_au) = smape.mean(), compute_ci_bootstrap(smape)
-            return (mape_avg, mape_al, mape_au), (mae_avg, mae_al, mae_au), (mse_avg, mse_al, mse_au), \
-                   (smape_avg, smape_al, smape_au), (rmse_avg, rmse_al, rmse_au), (r2_avg, r2_al, r2_au)
+    mse_value = mean_squared_error(y_true.reshape(-1), y_pred.reshape(-1))
+    mae_value = mean_absolute_error(y_true.reshape(-1), y_pred.reshape(-1))
+    mape_value = mean_absolute_percentage_error(y_true.reshape(-1), y_pred.reshape(-1))
+    smape_value = symmetric_mean_absolute_percentage_error(y_true, y_pred)
+    rmse_value = root_mean_squared_error(y_true.reshape(-1), y_pred.reshape(-1))
+    r2_value = r2_score(y_true.reshape(-1), y_pred.reshape(-1))
+    estimates = (mse_value, mae_value, mape_value, smape_value, rmse_value, r2_value)
 
-    except Exception as e:
-        print(e)
-        quit()
-    return mape.mean(), mae.mean(), mse.mean(), smape.mean(), rmse.mean(), r2.mean()
+    if not compute_ci:
+        return estimates
+
+    sample_axes = tuple(range(1, y_true.ndim))
+    error = y_pred - y_true
+    mse_samples = np.mean(error ** 2, axis=sample_axes)
+    mae_samples = np.mean(np.abs(error), axis=sample_axes)
+    mape_samples = np.mean(
+        np.abs(error) / np.maximum(np.abs(y_true), np.finfo(float).eps),
+        axis=sample_axes,
+    )
+    smape_samples = np.mean(
+        np.abs(error) / (np.abs(y_pred) + np.abs(y_true) + 1e-6),
+        axis=sample_axes,
+    )
+    rmse_samples = np.sqrt(mse_samples)
+
+    metric_samples = (mse_samples, mae_samples, mape_samples, smape_samples, rmse_samples)
+    intervals = [compute_ci_bootstrap(values) for values in metric_samples]
+
+    r2_bootstrap = []
+    for _ in range(500):
+        indices = np.random.randint(0, y_true.shape[0], size=y_true.shape[0])
+        r2_bootstrap.append(
+            r2_score(y_true[indices].reshape(-1), y_pred[indices].reshape(-1))
+        )
+    intervals.append(tuple(np.percentile(r2_bootstrap, [5, 95])))
+
+    return tuple(
+        (float(estimate), float(bounds[0]), float(bounds[1]))
+        for estimate, bounds in zip(estimates, intervals)
+    )
 
